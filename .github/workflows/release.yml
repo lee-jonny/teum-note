@@ -18,6 +18,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - name: Check Swift version
         run: swift --version
       - name: Check app
@@ -33,9 +35,40 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
+          test "$(plutil -extract CFBundleShortVersionString raw dist/Teum.app/Contents/Info.plist)" = "${TAG#v}"
           ditto -c -k --sequesterRsrc --keepParent dist/Teum.app "dist/Teum-${TAG#v}-macos-arm64.zip"
       - name: Attach app to release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: gh release upload "$TAG" dist/Teum-*-macos-arm64.zip --clobber
+        run: |
+          asset="Teum-${TAG#v}-macos-arm64.zip"
+          existing=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          if ! grep -Fxq "$asset" <<< "$existing"; then
+            gh release upload "$TAG" "dist/$asset"
+          fi
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: tap
+      - name: Update Homebrew cask for the latest stable release
+        working-directory: tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 0
+          latest=$(gh release view --json tagName --jq .tagName)
+          [[ "$latest" = "$TAG" ]] || exit 0
+          asset="Teum-${TAG#v}-macos-arm64.zip"
+          gh release download "$TAG" --pattern "$asset" --dir "$RUNNER_TEMP"
+          export SHA256=$(shasum -a 256 "$RUNNER_TEMP/$asset" | cut -d ' ' -f 1)
+          ruby -pi -e 'sub(/^  version ".*"$/, "  version \"#{ENV.fetch("TAG").delete_prefix("v")}\""); sub(/^  sha256 ".*"$/, "  sha256 \"#{ENV.fetch("SHA256")}\"")' Casks/teum.rb
+          if ! git diff --quiet -- Casks/teum.rb; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add Casks/teum.rb
+            git commit -m "Update Teum cask to $TAG"
+            git push origin HEAD:main
+          fi

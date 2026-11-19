@@ -183,6 +183,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     // Borderless accessory panels do not always participate in the main-window responder chain.
     // Route editing commands to the visible native editor instead of leaving them disabled.
     private var activeTextEditor: NSTextView? {
+        guard let view = activeTextView, view.isEditable else { return nil }
+        return view
+    }
+
+    private var activeTextView: NSTextView? {
         guard editor?.isVisible == true else { return nil }
         func find(in view: NSView) -> NSTextView? {
             if let textView = view as? NSTextView { return textView }
@@ -206,16 +211,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
             return store.canRedoListChange || activeTextEditor?.undoManager?.canRedo == true
         }
         guard item.action == #selector(forwardEditorCommand(_:)) else { return true }
-        guard let textView = activeTextEditor else { return false }
+        guard let textView = activeTextView else { return false }
         switch item.representedObject as? String {
-        case "cut:", "copy:": return textView.selectedRange().length > 0
-        case "paste:": return NSPasteboard.general.availableType(from: [.string, .rtf]) != nil
+        case "cut:": return textView.isEditable && textView.selectedRange().length > 0
+        case "copy:": return textView.selectedRange().length > 0
+        case "paste:": return textView.isEditable && NSPasteboard.general.availableType(from: [.string, .rtf]) != nil
         default: return true
         }
     }
 
     @objc private func forwardEditorCommand(_ item: NSMenuItem) {
-        guard let textView = activeTextEditor else { return }
+        guard let textView = activeTextView, validateMenuItem(item) else { return }
         editor.makeKeyAndOrderFront(nil)
         editor.makeFirstResponder(textView)
         switch item.representedObject as? String {

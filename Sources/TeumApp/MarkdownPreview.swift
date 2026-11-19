@@ -1,78 +1,58 @@
+import AppKit
 import SwiftUI
 import TeumCore
 
-struct MarkdownPreview: View {
+struct MarkdownPreview: NSViewRepresentable {
     let source: String
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("아직 적어둔 내용이 없어요.").foregroundStyle(.secondary)
-                }
-                ForEach(Array(MarkdownDocument.blocks(in: source).enumerated()), id: \.offset) { _, block in
-                    blockView(block)
-                }
-            }
-            .font(.system(size: 15))
-            .lineSpacing(5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 5)
-        }
-        .accessibilityLabel("마크다운 미리보기")
-        .tint(Color(red: 0.22, green: 0.39, blue: 0.36))
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let reader = PreviewTextView()
+        reader.isEditable = false
+        reader.isSelectable = true
+        reader.drawsBackground = false
+        reader.isVerticallyResizable = true
+        reader.autoresizingMask = [.width]
+        reader.textContainer?.widthTracksTextView = true
+        reader.textContainerInset = NSSize(width: 0, height: 6)
+        reader.setAccessibilityLabel("마크다운 미리보기")
+        scroll.documentView = reader
+        return scroll
     }
 
-    @ViewBuilder private func blockView(_ block: MarkdownDocument.Block) -> some View {
-        switch block {
-        case .heading(let level, let text):
-            Text(inline(text))
-                .font(.system(size: level == 1 ? 25 : level == 2 ? 21 : level == 3 ? 18 : 16, weight: .semibold))
-                .padding(.top, 4)
-                .accessibilityAddTraits(.isHeader)
-        case .paragraph(let text):
-            Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
-        case .listItem(let marker, let text, let indent, let checked):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                if let checked {
-                    Image(systemName: checked ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel(checked ? "완료" : "미완료")
-                } else {
-                    Text(marker.first?.isNumber == true ? marker : "•")
-                        .foregroundStyle(.secondary)
-                }
-                Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.leading, CGFloat(min(indent, 12)) * 6)
-        case .quote(let text):
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 2).fill(.primary.opacity(0.2)).frame(width: 3)
-                Text(inline(text)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        case .code(let language, let text):
-            VStack(alignment: .leading, spacing: 8) {
-                if !language.isEmpty {
-                    Text(language).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                }
-                ScrollView(.horizontal) {
-                    Text(verbatim: text)
-                        .font(.system(size: 12, design: .monospaced))
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-        case .divider:
-            Rectangle().fill(.primary.opacity(0.15)).frame(height: 1).padding(.vertical, 5)
-        }
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let reader = scroll.documentView as? PreviewTextView, reader.source != source else { return }
+        reader.source = source
+        reader.textStorage?.setAttributedString(MarkdownPreviewText.render(source))
+        reader.setSelectedRange(NSRange(location: 0, length: 0))
+    }
+}
+
+private final class PreviewTextView: NSTextView {
+    var source: String?
+
+    override func copy(_ sender: Any?) {
+        _ = writeSelection(to: .general, types: [.string])
     }
 
-    private func inline(_ source: String) -> AttributedString {
-        (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
+    override func writeSelection(to pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard types.contains(.string) else { return super.writeSelection(to: pasteboard, types: types) }
+        let range = selectedRange()
+        guard range.length > 0 else { return false }
+        let selected = (string as NSString).substring(with: range)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([selected as NSString])
+    }
+
+    override func selectionRange(forProposedRange range: NSRange, granularity: NSSelectionGranularity) -> NSRange {
+        if granularity == .selectByWord, let storage = textStorage,
+           let block = MarkdownPreviewText.blockRange(at: range.location, in: storage),
+           NSMaxRange(range) <= NSMaxRange(block) {
+            return block
+        }
+        return super.selectionRange(forProposedRange: range, granularity: granularity)
     }
 }

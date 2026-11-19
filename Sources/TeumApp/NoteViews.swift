@@ -2,13 +2,13 @@ import SwiftUI
 import TeumCore
 
 extension NoteColor {
-    var paper: Color {
+    var accent: Color {
         switch self {
-        case .butter: Color(red: 0.98, green: 0.94, blue: 0.78)
-        case .peach: Color(red: 0.98, green: 0.86, blue: 0.79)
-        case .sage: Color(red: 0.86, green: 0.92, blue: 0.82)
-        case .sky: Color(red: 0.83, green: 0.91, blue: 0.96)
-        case .lavender: Color(red: 0.91, green: 0.87, blue: 0.96)
+        case .butter: Color(red: 0.76, green: 0.67, blue: 0.44)
+        case .peach: Color(red: 0.79, green: 0.57, blue: 0.51)
+        case .sage: Color(red: 0.48, green: 0.66, blue: 0.57)
+        case .sky: Color(red: 0.48, green: 0.63, blue: 0.76)
+        case .lavender: Color(red: 0.65, green: 0.58, blue: 0.75)
         }
     }
 
@@ -23,7 +23,8 @@ extension NoteColor {
     }
 }
 
-private let ink = Color(red: 0.23, green: 0.25, blue: 0.22)
+private let ink = Color.primary
+private let paper = Color(nsColor: .windowBackgroundColor)
 
 enum RailItem: Hashable {
     case note(UUID)
@@ -73,7 +74,8 @@ struct EdgeRailView: View {
                                 .frame(width: expanded ? RailLayout.expandedWidth : RailLayout.collapsedWidth, height: 28)
                                 .clipped()
                                 .foregroundStyle(ink)
-                                .background(note.color.paper, in: RoundedRectangle(cornerRadius: 6))
+                                .background(expanded ? note.color.accent.opacity(0.22) : note.color.accent, in: RoundedRectangle(cornerRadius: 6))
+                                .background(paper, in: RoundedRectangle(cornerRadius: 6))
                                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ink.opacity(selected ? 0.28 : 0), lineWidth: 1))
                                 .contentShape(RoundedRectangle(cornerRadius: 6))
                         }
@@ -109,7 +111,6 @@ struct EdgeRailView: View {
                 guard let request else { return }
                 scroll.scrollTo(request.noteID, anchor: .center)
             }
-            .environment(\.colorScheme, .light)
         }
     }
 }
@@ -127,9 +128,16 @@ struct NoteEditorView: View {
                 Group {
                     if preview {
                         MarkdownPreview(source: note.text)
-                            .contentShape(Rectangle())
-                            .onTapGesture { preview = false }
-                            .help("클릭해서 편집")
+                            .id(note.id)
+                            .overlay(alignment: .topLeading) {
+                                if note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text("아직 적어둔 내용이 없어요.")
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 5).padding(.top, 6)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .help("더블클릭으로 문단 선택 · 드래그로 부분 선택 · ⌘C로 복사")
                     } else {
                         editor(for: note)
                     }
@@ -140,7 +148,7 @@ struct NoteEditorView: View {
                 HStack(spacing: 6) {
                     ForEach(NoteColor.allCases, id: \.self) { color in
                         Button { store.updateColor(color, id: note.id) } label: {
-                            Circle().fill(color.paper)
+                            Circle().fill(color.accent)
                                 .overlay(Circle().strokeBorder(ink.opacity(note.color == color ? 0.4 : 0.15)))
                                 .overlay {
                                     if note.color == color {
@@ -150,6 +158,7 @@ struct NoteEditorView: View {
                                 .frame(width: 14, height: 14)
                         }
                         .accessibilityLabel("\(color.name) 색상")
+                        .accessibilityAddTraits(note.color == color ? [.isSelected] : [])
                         .help(color.name)
                     }
                     Spacer(minLength: 8)
@@ -161,7 +170,7 @@ struct NoteEditorView: View {
                             .background(preview ? ink.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6))
                     }
                     .keyboardShortcut("m", modifiers: [.command, .shift])
-                    .help(preview ? "편집으로 돌아가기 · ⌘⇧M" : "마크다운 미리보기 · ⌘⇧M")
+                    .help(preview ? "메모 편집 · ⌘⇧M" : "마크다운 미리보기 · ⌘⇧M")
                     .accessibilityLabel(preview ? "메모 편집" : "마크다운 미리보기")
                     Menu {
                         Text(store.saveState)
@@ -189,7 +198,7 @@ struct NoteEditorView: View {
                     .accessibilityLabel("메모 접기")
                 }
                 .font(.system(size: 12))
-                .foregroundStyle(ink.opacity(0.65))
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 23).padding(.bottom, 16)
 
                 if store.errorMessage != nil {
@@ -201,10 +210,9 @@ struct NoteEditorView: View {
             }
             .foregroundStyle(ink)
             .buttonStyle(.plain)
-            .background(note.color.paper)
+            .background(paper)
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.5)))
-            .environment(\.colorScheme, .light)
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color(nsColor: .separatorColor)))
             .onChange(of: note.id) { _, _ in
                 preview = !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -222,9 +230,8 @@ struct NoteEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .foregroundStyle(ink)
             .buttonStyle(.plain)
-            .background(NoteColor.butter.paper)
+            .background(paper)
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            .environment(\.colorScheme, .light)
         }
     }
 
