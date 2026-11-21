@@ -5,6 +5,7 @@ public enum MarkdownFolder {
     public struct Document: Equatable, Sendable {
         public let url: URL
         public let text: String
+        public let modifiedAt: Date
         fileprivate let data: Data
     }
 
@@ -31,7 +32,7 @@ public enum MarkdownFolder {
             result = Result {
                 let data = try Data(contentsOf: location)
                 guard let text = String(data: data, encoding: .utf8) else { throw FileError.invalidEncoding }
-                return Document(url: url, text: text, data: data)
+                return Document(url: url, text: text, modifiedAt: modificationDate(at: location), data: data)
             }
         }
         if let coordinationError { throw coordinationError }
@@ -44,7 +45,7 @@ public enum MarkdownFolder {
             try verifyUnchanged(original, at: location)
             try data.write(to: location, options: .atomic)
         }
-        return Document(url: original.url, text: text, data: data)
+        return Document(url: original.url, text: text, modifiedAt: modificationDate(at: original.url), data: data)
     }
 
     @discardableResult
@@ -64,7 +65,7 @@ public enum MarkdownFolder {
         if let coordinationError { throw coordinationError }
         guard let result else { throw CocoaError(.fileWriteUnknown) }
         try result.get()
-        return Document(url: destination, text: document.text, data: document.data)
+        return Document(url: destination, text: document.text, modifiedAt: document.modifiedAt, data: document.data)
     }
 
     public static func archive(_ document: Document, in directory: URL) throws {
@@ -82,12 +83,19 @@ public enum MarkdownFolder {
 
     /// A repeated export leaves the existing file untouched, even if it has since been edited.
     @discardableResult
-    public static func create(_ text: String, at url: URL) throws -> Document {
+    public static func create(_ text: String, at url: URL, modifiedAt: Date? = nil) throws -> Document {
         let data = Data(text.utf8)
         try coordinateWrite(to: url) { location in
             try data.write(to: location, options: .withoutOverwriting)
+            if let modifiedAt {
+                try? FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: location.path)
+            }
         }
-        return Document(url: url, text: text, data: data)
+        return Document(url: url, text: text, modifiedAt: modificationDate(at: url), data: data)
+    }
+
+    private static func modificationDate(at url: URL) -> Date {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
     }
 
     private static func coordinateWrite(to url: URL, action: (URL) throws -> Void) throws {

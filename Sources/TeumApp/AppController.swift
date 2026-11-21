@@ -63,6 +63,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
                 }
             } else if modifiers == [.command, .shift] {
                 switch Int(event.keyCode) {
+                case kVK_ANSI_M:
+                    if let self, (event.window ?? NSApp.keyWindow) === self.editor, self.canToggleNoteMode {
+                        if !event.isARepeat { self.toggleNoteMode() }
+                        return nil
+                    }
                 case kVK_ANSI_Z: self?.redoAction(nil); return nil
                 case kVK_ANSI_X: if self?.applyFormatting(.strikethrough) == true { return nil }
                 case kVK_ANSI_7: if self?.applyFormatting(.numberedList) == true { return nil }
@@ -118,7 +123,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         editor.contentView = NSHostingView(rootView: NoteEditorView(store: store, close: { [weak self] in
             self?.collapse()
         }, add: { [weak self] in self?.addNote() }, delete: { [weak self] id in self?.confirmDelete(id) },
-           recover: { [weak self] in self?.saveDraftAsCopy() }))
+           recover: { [weak self] in self?.saveDraftAsCopy() },
+           toggleMode: { [weak self] in self?.toggleNoteMode() }))
     }
 
     private func setupMenu() {
@@ -133,6 +139,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         addItem("다음 메모", action: #selector(nextNote), to: menu)
         addItem("새 메모", action: #selector(addNote), key: "n", to: menu)
         addItem("현재 메모 삭제", action: #selector(deleteCurrentNote), key: "w", to: menu)
+        let mode = menu.addItem(withTitle: "편집 / 미리보기 전환", action: #selector(toggleNoteMode), keyEquivalent: "m")
+        mode.keyEquivalentModifierMask = [.command, .shift]
+        mode.target = self
         addItem("실행 취소", action: #selector(undoAction(_:)), key: "z", to: menu)
         addItem("다시 실행", action: #selector(redoAction(_:)), to: menu)
         let formatItem = NSMenuItem(title: "서식", action: nil, keyEquivalent: "")
@@ -208,6 +217,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleNoteMode) { return canToggleNoteMode }
         if item.action == #selector(deleteCurrentNote) {
             return editor?.isVisible == true && store.selectedNote != nil
         }
@@ -227,6 +237,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         case "copy:": return textView.selectedRange().length > 0
         case "paste:": return textView.isEditable && NSPasteboard.general.availableType(from: [.string, .rtf]) != nil
         default: return true
+        }
+    }
+
+    private var canToggleNoteMode: Bool {
+        editor?.isVisible == true && store.selectedNote != nil && activeTextEditor?.hasMarkedText() != true
+    }
+
+    @objc private func toggleNoteMode() {
+        guard canToggleNoteMode, let id = store.selectedID else { return }
+        let previousIndex = store.notes.firstIndex { $0.id == id }
+        store.toggleNoteMode()
+        if previousIndex != store.notes.firstIndex(where: { $0.id == id }) {
+            pendingRepositionID = id
+            store.scrollRequest = NoteScrollRequest(noteID: id)
         }
     }
 
@@ -375,14 +399,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
 
     private func openNote(_ id: UUID, animate: Bool = true) {
         guard let screen else { return }
+        let previousIndex = store.notes.firstIndex { $0.id == id }
         store.flush(finishingTitle: store.selectedID == id ? nil : store.selectedID)
+        let tabMoved = previousIndex != store.notes.firstIndex { $0.id == id }
         lastOpenedID = id
         let wasVisible = editor.isVisible
         animationGeneration += 1
         store.selectedID = id
         if tabsVisible { rail.orderFrontRegardless() }
         let visibleTabY = noteTabCenterY(id)
-        pendingRepositionID = visibleTabY == nil ? id : nil
+        pendingRepositionID = visibleTabY == nil || tabMoved ? id : nil
         if pendingRepositionID != nil { store.scrollRequest = NoteScrollRequest(noteID: id) }
         let target = PanelPlacement.editorFrame(visibleFrame: screen.visibleFrame, edge: store.notebook.edge, railWidth: RailLayout.expandedWidth, anchorY: visibleTabY ?? rail.frame.midY)
         editor.alphaValue = 1
@@ -402,7 +428,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         NSApp.activate(ignoringOtherApps: true)
         // A layout callback can arrive before the panel becomes visible.
         // Complete the placement now if scrolling has already exposed the tab.
-        finishPendingReposition()
+        if !tabMoved { finishPendingReposition() }
     }
 
     private func collapse() {

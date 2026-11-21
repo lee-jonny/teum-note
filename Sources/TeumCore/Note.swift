@@ -3,6 +3,15 @@ import Foundation
 public enum NoteColor: String, Codable, CaseIterable, Sendable {
     case butter, peach, sage, sky, lavender
 
+    public static func forFilename(_ filename: String) -> NoteColor {
+        // A fixed FNV-1a seed gives the same color across launches and Macs.
+        let normalized = filename.precomposedStringWithCanonicalMapping.lowercased()
+        let hash = normalized.utf8.reduce(UInt32(2_166_136_261)) { hash, byte in
+            (hash ^ UInt32(byte)) &* 16_777_619
+        }
+        return allCases[Int(hash % UInt32(allCases.count))]
+    }
+
     public static func following(_ last: NoteColor?) -> NoteColor {
         guard let last, let index = allCases.firstIndex(of: last) else { return .butter }
         return allCases[(index + 1) % allCases.count]

@@ -103,8 +103,8 @@ import TeumCore
     try Data(original.text.utf8).write(to: file, options: .atomic)
 
     let reopened = NotebookStore(fileURL: fixture.legacy)
-    #expect(reopened.notes.map(\.id) == [original.id, goodID])
-    #expect(reopened.notes.first?.color == original.color)
+    #expect(reopened.notebook.notes.map(\.id) == [original.id, goodID])
+    #expect(reopened.notebook.notes.first?.color == original.color)
     #expect(reopened.notebook.edge == .left)
 }
 
@@ -124,4 +124,105 @@ private struct StoreFixture {
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: root) }
+}
+
+@Test @MainActor func togglingNoteModeKeepsPerNoteDefaultsAndFinishesEditing() throws {
+    let fixture = try StoreFixture()
+    defer { fixture.cleanup() }
+    let store = fixture.store
+    let existing = try #require(store.notebook.notes.first)
+    store.selectedID = existing.id
+    #expect(store.isPreviewing)
+
+    store.toggleNoteMode()
+    #expect(!store.isPreviewing)
+    store.updateText("# 바뀐 제목\n\n저장할 메모", id: existing.id)
+    store.toggleNoteMode()
+    #expect(store.isPreviewing)
+    let file = try #require(store.file(for: existing.id))
+    #expect(file.lastPathComponent == "바뀐 제목.md")
+    #expect(try MarkdownFolder.read(file)?.text == "# 바뀐 제목\n\n저장할 메모")
+
+    let created = try store.addNote()
+    let blank = try #require(created)
+    #expect(store.selectedID == blank)
+    #expect(!store.isPreviewing)
+    store.toggleNoteMode()
+    #expect(store.isPreviewing)
+    store.selectedID = existing.id
+    #expect(store.isPreviewing)
+    store.selectedID = nil
+    store.toggleNoteMode()
+    #expect(store.isPreviewing)
+}
+
+@Test @MainActor func tabOrderUsesFileDatesAndMovesOnlyWhenEditingFinishes() throws {
+    let fixture = try StoreFixture()
+    defer { fixture.cleanup() }
+    let store = fixture.store
+    let local = try #require(store.notebook.notes.first)
+    let localFile = try #require(store.file(for: local.id))
+    let old = Date(timeIntervalSince1970: 100)
+    let newer = Date(timeIntervalSince1970: 200)
+    try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: localFile.path)
+    let connected = fixture.shared.appendingPathComponent("새 파일.md")
+    try MarkdownFolder.create("# 새 파일", at: connected, modifiedAt: newer)
+    try store.linkedFolders.add(fixture.shared)
+
+    let reopened = NotebookStore(fileURL: fixture.legacy)
+    reopened.reloadFolders()
+    let remote = try #require(reopened.linkedFolders.notes.first)
+    #expect(reopened.notes.map(\.id) == [local.id, remote.id])
+    let color = reopened.displayColor(for: local)
+    reopened.selectedID = local.id
+    reopened.toggleNoteMode()
+    reopened.updateText("# 로컬 제목\n\n바뀐 본문", id: local.id)
+    #expect(reopened.flush())
+    #expect(reopened.notes.map(\.id) == [local.id, remote.id])
+    reopened.toggleNoteMode()
+    #expect(reopened.notes.map(\.id) == [remote.id, local.id])
+    #expect(reopened.displayColor(for: local) == color)
+
+    let nextLaunch = NotebookStore(fileURL: fixture.legacy)
+    nextLaunch.reloadFolders()
+    #expect(nextLaunch.notes.last?.id == local.id)
+    let added = try nextLaunch.addNote()
+    #expect(nextLaunch.notes.last?.id == added)
+}
+
+@Test @MainActor func connectedEditDateWaitsForEditingToFinishEvenWhenReloadingFolders() throws {
+    let fixture = try StoreFixture()
+    defer { fixture.cleanup() }
+    let store = fixture.store
+    let local = try #require(store.notebook.notes.first)
+    let remoteFile = fixture.shared.appendingPathComponent("연결 메모.md")
+    try MarkdownFolder.create("# 연결 메모", at: remoteFile, modifiedAt: Date(timeIntervalSince1970: 100))
+    try store.linkedFolders.add(fixture.shared)
+    store.reloadFolders()
+    let remote = try #require(store.linkedFolders.notes.first)
+    #expect(store.notes.map(\.id) == [remote.id, local.id])
+
+    store.selectedID = remote.id
+    store.toggleNoteMode()
+    store.updateText("# 연결 메모\n\n본문 추가", id: remote.id)
+    #expect(store.flush())
+    store.reloadFolders()
+    #expect(store.notes.map(\.id) == [remote.id, local.id])
+    store.toggleNoteMode()
+    #expect(store.notes.map(\.id) == [local.id, remote.id])
+}
+
+@Test @MainActor func automaticColorMatchesFilenameAcrossFoldersAndNormalizations() throws {
+    let fixture = try StoreFixture()
+    defer { fixture.cleanup() }
+    let sameName = "로컬 제목.md"
+    try MarkdownFolder.create("# 다른 본문", at: fixture.shared.appendingPathComponent(sameName))
+    let store = fixture.store
+    try store.linkedFolders.add(fixture.shared)
+    store.reloadFolders()
+    let local = try #require(store.notebook.notes.first)
+    let connected = try #require(store.linkedFolders.notes.first)
+    #expect(store.displayColor(for: local) == store.displayColor(for: connected))
+    #expect(NoteColor.forFilename(sameName) == NoteColor.forFilename(sameName.decomposedStringWithCanonicalMapping))
+    #expect(NoteColor.forFilename("test.md") == .lavender)
 }

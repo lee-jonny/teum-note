@@ -21,15 +21,6 @@ extension NoteColor {
                      blue: Double(rgb & 0xFF) / 255)
     }
 
-    var name: String {
-        switch self {
-        case .butter: "살구"
-        case .peach: "로즈"
-        case .sage: "민트"
-        case .sky: "미스트 블루"
-        case .lavender: "라일락"
-        }
-    }
 }
 
 private let ink = Color.primary
@@ -83,7 +74,7 @@ struct EdgeRailView: View {
                                 .frame(width: expanded ? RailLayout.expandedWidth : RailLayout.collapsedWidth, height: 28)
                                 .clipped()
                                 .foregroundStyle(ink)
-                                .background(note.color.surface(for: colorScheme), in: RoundedRectangle(cornerRadius: 6))
+                                .background(store.displayColor(for: note).surface(for: colorScheme), in: RoundedRectangle(cornerRadius: 6))
                                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ink.opacity(selected ? 0.31 : 0.14)))
                                 .contentShape(RoundedRectangle(cornerRadius: 6))
                         }
@@ -129,12 +120,13 @@ struct NoteEditorView: View {
     let add: () -> Void
     let delete: (UUID) -> Void
     let recover: () -> Void
-    @State private var preview = true
+    let toggleMode: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let note = store.selectedNote {
             let linkedFile = store.linkedFolders.file(for: note.id)
+            let preview = store.isPreviewing
             VStack(spacing: 0) {
                 Group {
                     if preview {
@@ -165,33 +157,12 @@ struct NoteEditorView: View {
                     .padding(.bottom, 3)
 
                 HStack(spacing: 6) {
-                    ForEach(linkedFile == nil ? NoteColor.allCases : [], id: \.self) { color in
-                        Button { store.updateColor(color, id: note.id) } label: {
-                            ZStack {
-                                Circle().fill(color.surface(for: colorScheme))
-                                    .overlay(Circle().strokeBorder(ink.opacity(0.26)))
-                                    .frame(width: 12, height: 12)
-                                if note.color == color {
-                                    Circle().strokeBorder(ink.opacity(0.55)).frame(width: 17, height: 17)
-                                }
-                            }
-                            .frame(width: 18, height: 26)
-                            .contentShape(Rectangle())
-                        }
-                        .accessibilityLabel("\(color.name) 색상")
-                        .accessibilityAddTraits(note.color == color ? [.isSelected] : [])
-                        .help(color.name)
-                    }
                     Spacer(minLength: 8)
-                    Button {
-                        if !preview { store.flush(finishingTitle: note.id) }
-                        preview.toggle()
-                    } label: {
+                    Button(action: toggleMode) {
                         Image(systemName: preview ? "pencil" : "eye")
                             .frame(width: 28, height: 28)
                             .background(preview ? ink.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
                     .help(preview ? "메모 편집 · ⌘⇧M" : "마크다운 미리보기 · ⌘⇧M")
                     .accessibilityLabel(preview ? "메모 편집" : "마크다운 미리보기")
                     Menu {
@@ -245,13 +216,9 @@ struct NoteEditorView: View {
             }
             .foregroundStyle(ink)
             .buttonStyle(.plain)
-            .background(note.color.surface(for: colorScheme))
+            .background(store.displayColor(for: note).surface(for: colorScheme))
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color(nsColor: .separatorColor)))
-            .onChange(of: note.id) { _, _ in
-                preview = !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            .onAppear { preview = !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         } else {
             VStack(spacing: 14) {
                 Text("메모가 없습니다")

@@ -10,7 +10,14 @@ struct NoteScrollRequest: Equatable {
 @MainActor @Observable
 final class NotebookStore {
     var notebook: Notebook
-    var selectedID: UUID?
+    var selectedID: UUID? {
+        didSet {
+            if selectedID != oldValue {
+                isPreviewing = selectedNote.map { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? true
+            }
+        }
+    }
+    private(set) var isPreviewing = true
     var hoveredNoteID: UUID?
     var scrollRequest: NoteScrollRequest?
     private(set) var loadFailed = false
@@ -19,6 +26,7 @@ final class NotebookStore {
     private var pendingSave: Task<Void, Never>?
     private var pendingBodies: Set<UUID> = []
     private var pendingTitles: Set<UUID> = []
+    private var savedEditDates: [UUID: Date] = [:]
     private var indexDirty = false
     private var fileErrors: [UUID: String] = [:]
     private var indexError: String?
@@ -40,8 +48,22 @@ final class NotebookStore {
         }
     }
 
-    var notes: [Note] { notebook.notes + linkedFolders.notes }
-    var selectedNote: Note? { notes.first { $0.id == selectedID } }
+    private var allNotes: [Note] { notebook.notes + linkedFolders.notes }
+
+    var notes: [Note] {
+        allNotes.sorted { left, right in
+            if left.updatedAt != right.updatedAt { return left.updatedAt < right.updatedAt }
+            let leftPath = file(for: left.id)?.path ?? left.id.uuidString
+            let rightPath = file(for: right.id)?.path ?? right.id.uuidString
+            return leftPath < rightPath
+        }
+    }
+
+    var selectedNote: Note? { allNotes.first { $0.id == selectedID } }
+
+    func displayColor(for note: Note) -> NoteColor {
+        NoteColor.forFilename(file(for: note.id)?.lastPathComponent ?? note.title)
+    }
     var localStorageFolder: URL { repository.folder }
     var storageFolder: URL { linkedFolders.defaultFolder ?? localStorageFolder }
     var newNoteLocation: String { linkedFolders.defaultFolder.map(folderLabel) ?? "이 Mac" }
@@ -60,12 +82,22 @@ final class NotebookStore {
         return name
     }
     var localReadIssues: [String] { repository.issues }
-    var errorMessage: String? { indexError ?? selectedID.flatMap { fileErrors[$0] } ?? fileErrors.values.sorted().first ?? loadError }
+    var errorMessage: String? {
+        selectedID.flatMap { fileErrors[$0] } ?? indexError ?? fileErrors.values.sorted().first ?? loadError
+    }
     var canUndoListChange: Bool { listHistory.canUndo }
     var canRedoListChange: Bool { listHistory.canRedo }
-    var hasUnsavedChanges: Bool { indexDirty || !pendingBodies.isEmpty || !pendingTitles.isEmpty }
+    var hasUnsavedChanges: Bool {
+        indexDirty || !pendingBodies.isEmpty || !pendingTitles.isEmpty
+    }
     var canCopyDraft: Bool {
         selectedID.map { fileErrors[$0] != nil && pendingBodies.contains($0) } == true && !loadFailed
+    }
+
+    func toggleNoteMode() {
+        guard let selectedID, selectedNote != nil else { return }
+        if !isPreviewing { flush(finishingTitle: selectedID) }
+        isPreviewing.toggle()
     }
 
     func saveState(for id: UUID) -> String {
@@ -91,7 +123,7 @@ final class NotebookStore {
         } else {
             guard !loadFailed else { return nil }
             index = notebook.notes.count
-            note = Note(color: NoteColor.following(notebook.notes.last?.color))
+            note = Note()
             try repository.create(note)
             notebook.notes.append(note)
             indexDirty = true
@@ -104,12 +136,12 @@ final class NotebookStore {
     }
 
     func reloadFolders() {
-        linkedFolders.reload(keepingDrafts: pendingBodies)
+        linkedFolders.reload(keepingDrafts: pendingBodies.union(savedEditDates.keys))
     }
 
     func saveDraftAsCopy(_ id: UUID) throws -> UUID? {
         guard !loadFailed, pendingBodies.contains(id), let draft = notes.first(where: { $0.id == id }) else { return nil }
-        let copy = Note(text: draft.text, color: draft.color)
+        let copy = Note(text: draft.text)
         try repository.create(copy)
         let previousSelection = selectedID
         listHistory.recordInsertion(copy, at: notebook.notes.count, previousSelection: previousSelection)
@@ -122,9 +154,10 @@ final class NotebookStore {
         } else {
             // Keep the draft available if the original still cannot be read.
             do {
-                if let text = try repository.reloadBody(id),
+                if let document = try repository.reloadBody(id),
                    let index = notebook.notes.firstIndex(where: { $0.id == id }) {
-                    notebook.notes[index].text = text
+                    notebook.notes[index].text = document.text
+                    notebook.notes[index].updatedAt = document.modifiedAt
                 } else {
                     notebook.notes.removeAll { $0.id == id }
                 }
@@ -138,12 +171,11 @@ final class NotebookStore {
     }
 
     func updateText(_ text: String, id: UUID) {
-        guard let note = notes.first(where: { $0.id == id }), note.text != text else { return }
+        guard let note = allNotes.first(where: { $0.id == id }), note.text != text else { return }
         if linkedFolders.file(for: id) != nil {
             linkedFolders.update(text, for: id)
         } else if let index = notebook.notes.firstIndex(where: { $0.id == id }) {
             notebook.notes[index].text = text
-            notebook.notes[index].updatedAt = .now
         } else {
             return
         }
@@ -154,16 +186,6 @@ final class NotebookStore {
         listHistory.clearRedo()
         prefersListUndo = false
         prefersListRedo = false
-        scheduleSave()
-    }
-
-    func updateColor(_ color: NoteColor, id: UUID) {
-        guard let index = notebook.notes.firstIndex(where: { $0.id == id }) else { return }
-        notebook.notes[index].color = color
-        listHistory.clearRedo()
-        prefersListUndo = false
-        prefersListRedo = false
-        indexDirty = true
         scheduleSave()
     }
 
@@ -200,8 +222,8 @@ final class NotebookStore {
         case .inserted(let id):
             guard let note = candidate.first(where: { $0.id == id }) else { return nil }
             if let file = linkedHistoryPaths[id] {
-                let folder = file.deletingLastPathComponent()
-                guard linkedFolders.folders.contains(where: { $0.pathComponents == folder.pathComponents }) else {
+                let folder = file.deletingLastPathComponent().resolvingSymlinksInPath()
+                guard linkedFolders.folders.contains(where: { $0.resolvingSymlinksInPath().path == folder.path }) else {
                     throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "폴더를 다시 연결한 뒤 실행 취소 또는 다시 실행을 시도해 주세요."])
                 }
                 try linkedFolders.restore(note, to: file)
@@ -220,7 +242,7 @@ final class NotebookStore {
 
     private func archive(_ note: Note) throws {
         let id = note.id
-        if pendingBodies.contains(id) { try saveBody(note) }
+        if pendingBodies.contains(id) { _ = try saveBody(note) }
         if let file = linkedFolders.file(for: id) {
             try linkedFolders.archive(id)
             linkedHistoryPaths[id] = file
@@ -241,6 +263,7 @@ final class NotebookStore {
     private func clearPending(_ id: UUID) {
         pendingBodies.remove(id)
         pendingTitles.remove(id)
+        savedEditDates[id] = nil
         fileErrors[id] = nil
     }
 
@@ -259,7 +282,7 @@ final class NotebookStore {
         }
     }
 
-    private func saveBody(_ note: Note) throws {
+    private func saveBody(_ note: Note) throws -> Date? {
         if linkedFolders.file(for: note.id) != nil {
             try linkedFolders.saveBody(note.id)
         } else {
@@ -267,12 +290,21 @@ final class NotebookStore {
         }
     }
 
+    private func publishEditDate(_ date: Date, for id: UUID) {
+        if linkedFolders.file(for: id) != nil {
+            linkedFolders.updateModifiedAt(date, for: id)
+        } else if let index = notebook.notes.firstIndex(where: { $0.id == id }) {
+            notebook.notes[index].updatedAt = date
+        }
+        savedEditDates[id] = nil
+    }
+
     @discardableResult
     func flush(finishingTitle id: UUID? = nil, finishingAllTitles: Bool = false) -> Bool {
         pendingSave?.cancel()
-        for note in notes where pendingBodies.contains(note.id) {
+        for note in allNotes where pendingBodies.contains(note.id) {
             do {
-                try saveBody(note)
+                if let date = try saveBody(note) { savedEditDates[note.id] = date }
                 pendingBodies.remove(note.id)
                 fileErrors[note.id] = nil
             } catch {
@@ -288,7 +320,7 @@ final class NotebookStore {
                 indexError = error.localizedDescription
             }
         }
-        for note in notes where pendingTitles.contains(note.id) && (finishingAllTitles || id == note.id) && !pendingBodies.contains(note.id) {
+        for note in allNotes where pendingTitles.contains(note.id) && (finishingAllTitles || id == note.id) && !pendingBodies.contains(note.id) {
             do {
                 if linkedFolders.file(for: note.id) != nil {
                     try linkedFolders.finishTitle(note.id)
@@ -305,6 +337,9 @@ final class NotebookStore {
             } catch {
                 fileErrors[note.id] = error.localizedDescription
             }
+        }
+        for (noteID, date) in savedEditDates where (finishingAllTitles || id == noteID) && !pendingBodies.contains(noteID) {
+            publishEditDate(date, for: noteID)
         }
         return fileErrors.isEmpty && indexError == nil
     }

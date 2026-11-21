@@ -45,12 +45,12 @@ public enum MarkdownFilename {
         }
     }
 
-    public static func create(_ text: String, in directory: URL, stem: String? = nil) throws -> MarkdownFolder.Document {
+    public static func create(_ text: String, in directory: URL, stem: String? = nil, modifiedAt: Date? = nil) throws -> MarkdownFolder.Document {
         let stem = stem ?? self.stem(for: text)
         for _ in 0..<5 {
             let url = try available(in: directory, stem: stem)
             do {
-                return try MarkdownFolder.create(text, at: url)
+                return try MarkdownFolder.create(text, at: url, modifiedAt: modifiedAt)
             } catch let error as CocoaError where error.code == .fileWriteFileExists {
                 continue
             }

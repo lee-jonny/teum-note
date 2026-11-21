@@ -1,9 +1,10 @@
 import Foundation
 
-/// The local index stores presentation metadata. The Markdown files own the note bodies.
+/// The local index keeps stable note identifiers. Markdown files own the note bodies and modification dates.
 public final class LocalMarkdownNotebook {
     private struct Entry: Codable, Equatable {
         var id: UUID
+        // Older builds still expect this field when reopening the index.
         var color: NoteColor
         var filename: String?
 
@@ -41,7 +42,7 @@ public final class LocalMarkdownNotebook {
     }
 
     public func create(_ note: Note) throws {
-        documents[note.id] = try MarkdownFilename.create(note.text, in: folder)
+        documents[note.id] = try MarkdownFilename.create(note.text, in: folder, modifiedAt: note.updatedAt)
     }
 
     public func load() throws -> Notebook {
@@ -71,7 +72,7 @@ public final class LocalMarkdownNotebook {
         var notebook: Notebook
         if let index {
             let notes = index.order.compactMap { entry in
-                documents[entry.id].map { Note(id: entry.id, text: $0.text, color: entry.color) }
+                documents[entry.id].map { Note(id: entry.id, text: $0.text, color: entry.color, updatedAt: $0.modifiedAt) }
             }
             notebook = Notebook(notes: notes, edge: index.edge)
         } else {
@@ -80,6 +81,7 @@ public final class LocalMarkdownNotebook {
                 let id = notebook.notes[offset].id
                 if let document = documents[id] {
                     notebook.notes[offset].text = document.text
+                    notebook.notes[offset].updatedAt = document.modifiedAt
                 }
             }
         }
@@ -87,7 +89,7 @@ public final class LocalMarkdownNotebook {
         for note in notebook.notes where documents[note.id] == nil {
             // The UUID lets a partial legacy migration resume before the first index write.
             let file = folder.appendingPathComponent(note.id.uuidString + ".md")
-            documents[note.id] = try MarkdownFolder.create(note.text, at: file)
+            documents[note.id] = try MarkdownFolder.create(note.text, at: file, modifiedAt: note.updatedAt)
         }
         try saveIndex(notebook)
         for note in notebook.notes {
@@ -101,11 +103,13 @@ public final class LocalMarkdownNotebook {
         return notebook
     }
 
-    public func saveBody(_ note: Note) throws {
+    @discardableResult
+    public func saveBody(_ note: Note) throws -> Date? {
         guard let document = documents[note.id] else { throw CocoaError(.fileNoSuchFile) }
-        if note.text != document.text {
-            documents[note.id] = try MarkdownFolder.save(note.text, replacing: document)
-        }
+        guard note.text != document.text else { return nil }
+        let saved = try MarkdownFolder.save(note.text, replacing: document)
+        documents[note.id] = saved
+        return saved.modifiedAt
     }
 
     public func archive(_ id: UUID) throws {
@@ -114,7 +118,7 @@ public final class LocalMarkdownNotebook {
         documents[id] = nil
     }
 
-    public func reloadBody(_ id: UUID) throws -> String? {
+    public func reloadBody(_ id: UUID) throws -> MarkdownFolder.Document? {
         guard let file = file(for: id) else { return nil }
         if !FileManager.default.fileExists(atPath: file.path) {
             documents[id] = nil
@@ -122,7 +126,7 @@ public final class LocalMarkdownNotebook {
         }
         guard let document = try MarkdownFolder.read(file) else { throw CocoaError(.fileReadUnknown) }
         documents[id] = document
-        return document.text
+        return document
     }
 
     public func saveIndex(_ notebook: Notebook) throws {
@@ -191,7 +195,7 @@ public final class LocalMarkdownNotebook {
         let listed = Set(notes.map(\.id))
         for id in documents.keys.sorted(by: { $0.uuidString < $1.uuidString }) where !listed.contains(id) {
             if let document = documents[id] {
-                notes.append(Note(id: id, text: document.text, color: NoteColor.following(notes.last?.color)))
+                notes.append(Note(id: id, text: document.text, updatedAt: document.modifiedAt))
             }
         }
     }

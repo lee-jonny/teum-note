@@ -90,7 +90,7 @@ final class LinkedNoteFolders {
                                 continue
                             }
                             refreshedDocuments[id] = document
-                            refreshedNotes.append(Note(id: id, text: document.text, color: .sky))
+                            refreshedNotes.append(Note(id: id, text: document.text, updatedAt: document.modifiedAt))
                         } catch {
                             issues.append("\(url.lastPathComponent) · \(error.localizedDescription)")
                         }
@@ -115,7 +115,12 @@ final class LinkedNoteFolders {
         notes[index].text = text
     }
 
-    func saveBody(_ id: UUID) throws {
+    func updateModifiedAt(_ date: Date, for id: UUID) {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[index].updatedAt = date
+    }
+
+    func saveBody(_ id: UUID) throws -> Date? {
         guard let original = documents[id], let note = notes.first(where: { $0.id == id }) else {
             throw CocoaError(.fileNoSuchFile)
         }
@@ -128,9 +133,10 @@ final class LinkedNoteFolders {
             !MarkdownFilename.matches(filename, stem: MarkdownFilename.stem(for: note.text)) {
             pendingRenames.insert(id)
         }
-        if note.text != original.text {
-            documents[id] = try MarkdownFolder.save(note.text, replacing: original)
-        }
+        guard note.text != original.text else { return nil }
+        let saved = try MarkdownFolder.save(note.text, replacing: original)
+        documents[id] = saved
+        return saved.modifiedAt
     }
 
     func finishTitle(_ id: UUID) throws {
@@ -155,7 +161,7 @@ final class LinkedNoteFolders {
     }
 
     func restore(_ note: Note, to file: URL) throws {
-        let document = try MarkdownFolder.create(note.text, at: file)
+        let document = try MarkdownFolder.create(note.text, at: file, modifiedAt: note.updatedAt)
         documents[note.id] = document
         ids[file] = note.id
         notes.append(note)
@@ -167,7 +173,7 @@ final class LinkedNoteFolders {
         let document = try MarkdownFilename.create(text, in: folder, stem: stem)
         documents[id] = document
         ids[document.url] = id
-        notes.append(Note(id: id, text: text, color: .sky))
+        notes.append(Note(id: id, text: text, updatedAt: document.modifiedAt))
         return id
     }
 
