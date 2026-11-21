@@ -41,12 +41,43 @@ public enum MarkdownFolder {
     public static func save(_ text: String, replacing original: Document) throws -> Document {
         let data = Data(text.utf8)
         try coordinateWrite(to: original.url) { location in
-            let values = try location.resourceValues(forKeys: [.isSymbolicLinkKey, .ubiquitousItemHasUnresolvedConflictsKey])
-            guard values.isSymbolicLink != true, values.ubiquitousItemHasUnresolvedConflicts != true,
-                  try Data(contentsOf: location) == original.data else { throw FileError.changedOnDisk }
+            try verifyUnchanged(original, at: location)
             try data.write(to: location, options: .atomic)
         }
         return Document(url: original.url, text: text, data: data)
+    }
+
+    @discardableResult
+    public static func move(_ document: Document, to destination: URL) throws -> Document {
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        var result: Result<Void, Error>?
+        coordinator.coordinate(writingItemAt: document.url, options: .forMoving,
+                               writingItemAt: destination, options: [], error: &coordinationError) { from, to in
+            result = Result {
+                try verifyUnchanged(document, at: from)
+                coordinator.item(at: from, willMoveTo: to)
+                try FileManager.default.moveItem(at: from, to: to)
+                coordinator.item(at: from, didMoveTo: to)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw CocoaError(.fileWriteUnknown) }
+        try result.get()
+        return Document(url: destination, text: document.text, data: document.data)
+    }
+
+    public static func archive(_ document: Document, in directory: URL) throws {
+        let archive = directory.appendingPathComponent("Recently Deleted", isDirectory: true)
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        let destination = try MarkdownFilename.available(in: archive, stem: MarkdownFilename.stem(for: document.text))
+        try move(document, to: destination)
+    }
+
+    private static func verifyUnchanged(_ original: Document, at location: URL) throws {
+        let values = try location.resourceValues(forKeys: [.isSymbolicLinkKey, .ubiquitousItemHasUnresolvedConflictsKey])
+        guard values.isSymbolicLink != true, values.ubiquitousItemHasUnresolvedConflicts != true,
+              try Data(contentsOf: location) == original.data else { throw FileError.changedOnDisk }
     }
 
     /// A repeated export leaves the existing file untouched, even if it has since been edited.

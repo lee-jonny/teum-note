@@ -88,6 +88,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         hoverTimer = timer
         if store.loadFailed { showError() }
         else if let first = store.notes.first { openNote(first.id, animate: false) }
+        if !store.localReadIssues.isEmpty { showLocalReadIssues() }
     }
 
     private func setupWindows() {
@@ -116,7 +117,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         rail.contentView = railView
         editor.contentView = NSHostingView(rootView: NoteEditorView(store: store, close: { [weak self] in
             self?.collapse()
-        }, add: { [weak self] in self?.addNote() }, delete: { [weak self] id in self?.confirmDelete(id) }))
+        }, add: { [weak self] in self?.addNote() }, delete: { [weak self] id in self?.confirmDelete(id) },
+           recover: { [weak self] in self?.saveDraftAsCopy() }))
     }
 
     private func setupMenu() {
@@ -149,7 +151,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         foldersMenu.delegate = self
         foldersItem.submenu = foldersMenu
         menu.addItem(foldersItem)
-        addItem("메모 저장 폴더 열기", action: #selector(revealStorage), to: menu)
+        addItem("이 Mac의 메모 폴더 열기", action: #selector(revealLocalStorage), to: menu)
         addItem("저장 다시 시도", action: #selector(retrySave), to: menu)
         menu.addItem(.separator())
         addItem("틈 종료", action: #selector(quit), key: "q", to: menu)
@@ -207,7 +209,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(deleteCurrentNote) {
-            return editor?.isVisible == true && store.selectedID.map { store.linkedFolders.file(for: $0) == nil } == true
+            return editor?.isVisible == true && store.selectedNote != nil
         }
         if item.action == #selector(formatCurrentNote(_:)) {
             return activeTextEditor.map { !$0.hasMarkedText() } ?? false
@@ -373,7 +375,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
 
     private func openNote(_ id: UUID, animate: Bool = true) {
         guard let screen else { return }
-        store.flush()
+        store.flush(finishingTitle: store.selectedID == id ? nil : store.selectedID)
         lastOpenedID = id
         let wasVisible = editor.isVisible
         animationGeneration += 1
@@ -404,7 +406,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     private func collapse() {
-        store.flush()
+        store.flush(finishingTitle: store.selectedID)
         pendingRepositionID = nil
         animationGeneration += 1
         let generation = animationGeneration
@@ -426,13 +428,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     @objc private func addNote() {
-        if let id = store.selectedID, let file = store.linkedFolders.file(for: id) {
-            addFolderNote(in: file.deletingLastPathComponent())
-            return
+        store.flush(finishingTitle: store.selectedID)
+        do {
+            guard let id = try store.addNote() else { showError(); return }
+            positionRail()
+            openNote(id)
+        } catch {
+            showFolderError(error.localizedDescription)
         }
-        guard let id = store.addNote() else { showError(); return }
-        positionRail()
-        openNote(id)
     }
 
     @objc private func deleteCurrentNote() {
@@ -441,42 +444,56 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     private func confirmDelete(_ id: UUID) {
-        guard let note = store.notebook.notes.first(where: { $0.id == id }) else { return }
+        guard let note = store.notes.first(where: { $0.id == id }) else { return }
         if !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let alert = NSAlert()
             alert.messageText = "이 메모를 삭제할까요?"
-            alert.informativeText = "삭제한 뒤에도 ⌘Z로 되돌릴 수 있습니다."
+            if store.linkedFolders.file(for: id) != nil {
+                alert.informativeText = "연결 폴더에서 파일을 제거합니다. iCloud Drive 폴더라면 삭제가 다른 기기에도 반영됩니다. 이 Mac에 보관된 메모는 ⌘Z로 되돌릴 수 있습니다."
+            } else {
+                alert.informativeText = "삭제한 뒤에도 ⌘Z로 되돌릴 수 있습니다."
+            }
             alert.addButton(withTitle: "취소")
             alert.addButton(withTitle: "삭제")
             guard alert.runModal() == .alertSecondButtonReturn else { return }
         }
-        pendingRepositionID = nil
-        guard store.deleteNote(id) else { return }
-        positionRail()
-        showCurrentNoteOrEmptyState()
-        if !store.flush() { showError() }
+        do {
+            guard try store.deleteNote(id) else { return }
+            pendingRepositionID = nil
+            positionRail()
+            showCurrentNoteOrEmptyState()
+            if !store.flush() { showError() }
+        } catch {
+            showFolderError(error.localizedDescription)
+        }
     }
 
     @objc private func undoAction(_ sender: Any?) {
-        if store.prefersListUndo, applyListChange(store.undoListChange()) { return }
-        if let textView = activeTextEditor, textView.undoManager?.canUndo == true {
-            editor.makeKeyAndOrderFront(nil)
-            editor.makeFirstResponder(textView)
-            textView.undoManager?.undo()
-            return
-        }
-        _ = applyListChange(store.undoListChange())
+        changeListOrText(redo: false)
     }
 
     @objc private func redoAction(_ sender: Any?) {
-        if store.prefersListRedo, applyListChange(store.redoListChange()) { return }
-        if let textView = activeTextEditor, textView.undoManager?.canRedo == true {
-            editor.makeKeyAndOrderFront(nil)
-            editor.makeFirstResponder(textView)
-            textView.undoManager?.redo()
-            return
+        changeListOrText(redo: true)
+    }
+
+    private func changeListOrText(redo: Bool) {
+        do {
+            let prefersList = redo ? store.prefersListRedo : store.prefersListUndo
+            if prefersList && (redo ? store.canRedoListChange : store.canUndoListChange) {
+                _ = applyListChange(redo ? try store.redoListChange() : try store.undoListChange())
+                return
+            }
+            if let textView = activeTextEditor, let manager = textView.undoManager,
+               redo ? manager.canRedo : manager.canUndo {
+                editor.makeKeyAndOrderFront(nil)
+                editor.makeFirstResponder(textView)
+                if redo { manager.redo() } else { manager.undo() }
+                return
+            }
+            _ = applyListChange(redo ? try store.redoListChange() : try store.undoListChange())
+        } catch {
+            showFolderError(error.localizedDescription)
         }
-        _ = applyListChange(store.redoListChange())
     }
 
     @discardableResult
@@ -541,20 +558,41 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     @objc private func revealStorage() {
-        NSWorkspace.shared.open(store.fileURL.deletingLastPathComponent())
+        NSWorkspace.shared.open(store.storageFolder)
+    }
+
+    @objc private func revealLocalStorage() {
+        let folder = store.localStorageFolder
+        let destination = FileManager.default.fileExists(atPath: folder.path)
+            ? folder : folder.deletingLastPathComponent()
+        NSWorkspace.shared.open(destination)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        addItem("폴더 연결…", action: #selector(connectFolder), to: menu)
+        let destination = store.newNoteLocation
+        let location = NSMenuItem(title: "새 메모 저장 위치 · \(destination)", action: nil, keyEquivalent: "")
+        location.isEnabled = false
+        menu.addItem(location)
+        addItem("새 메모 저장 폴더 선택…", action: #selector(chooseDefaultFolder), to: menu)
+        if store.linkedFolders.defaultFolder != nil {
+            addItem("새 메모 저장 폴더 열기", action: #selector(revealStorage), to: menu)
+            addItem("이 Mac에 새 메모 저장", action: #selector(useLocalFolder), to: menu)
+        }
+        menu.addItem(.separator())
+        addItem("기존 메모 폴더 연결…", action: #selector(connectFolder), to: menu)
         addItem("로컬 메모를 폴더로 복사…", action: #selector(exportLocalNotes), to: menu)
         addItem("연결한 폴더 새로고침", action: #selector(refreshFolders), to: menu)
-        if store.canCopyLinkedDraft {
-            addItem("저장되지 않은 편집을 사본으로 저장", action: #selector(saveLinkedDraftAsCopy), to: menu)
+        if store.canCopyDraft {
+            addItem("저장되지 않은 편집을 사본으로 저장", action: #selector(saveDraftAsCopy), to: menu)
+        }
+        if !store.localReadIssues.isEmpty {
+            addItem("로컬 메모 문제 보기…", action: #selector(showLocalReadIssues), to: menu)
         }
         for folder in store.linkedFolders.folders {
             let entry = NSMenuItem(title: folder.lastPathComponent, action: nil, keyEquivalent: "")
             entry.toolTip = folder.path
+            entry.state = store.linkedFolders.defaultFolder?.path == folder.path ? .on : .off
             let actions = NSMenu()
             for (title, action) in [("이 폴더에 새 메모", #selector(createFolderNote(_:))),
                                     ("Finder에서 열기", #selector(revealLinkedFolder(_:))),
@@ -568,6 +606,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         }
     }
 
+    @objc private func showLocalReadIssues() {
+        showFolderMessage("일부 로컬 메모를 확인해 주세요", store.localReadIssues.prefix(8).joined(separator: "\n"))
+    }
+
     private func chooseFolder(prompt: String, message: String) -> URL? {
         let picker = NSOpenPanel()
         picker.canChooseDirectories = true
@@ -576,6 +618,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         picker.prompt = prompt
         picker.message = message
         return picker.runModal() == .OK ? picker.url : nil
+    }
+
+    @objc private func chooseDefaultFolder() {
+        guard let url = chooseFolder(prompt: "저장 위치로 사용",
+                                     message: "iCloud Drive나 로컬 폴더를 선택합니다. 앞으로 만드는 메모는 이 폴더에 Markdown 파일로 저장됩니다.") else { return }
+        do {
+            try store.linkedFolders.setDefaultFolder(url)
+            refreshFolders()
+        } catch { showFolderError(error.localizedDescription) }
+    }
+
+    @objc private func useLocalFolder() {
+        do {
+            try store.linkedFolders.setDefaultFolder(nil)
+        } catch { showFolderError(error.localizedDescription) }
     }
 
     @objc private func connectFolder() {
@@ -588,11 +645,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
 
     @objc private func exportLocalNotes() {
         guard !store.loadFailed, !store.notebook.notes.isEmpty else { return }
-        guard let url = chooseFolder(prompt: "복사", message: "로컬 메모를 Markdown 파일로 복사하고 폴더를 연결합니다. iCloud Drive 폴더를 선택하면 다른 기기에도 파일이 표시됩니다.") else { return }
+        guard let url = chooseFolder(prompt: "복사", message: "로컬 Markdown 메모를 복사하고 폴더를 연결합니다. iCloud Drive 폴더를 선택하면 다른 기기에도 파일이 표시됩니다.") else { return }
         do {
-            try store.linkedFolders.export(store.notebook.notes, to: url)
             try store.linkedFolders.add(url)
-            refreshFolders()
+            let summary = try store.linkedFolders.export(store.notebook.notes, to: url)
+            reloadLinkedNotes()
+            showFolderMessage("메모 복사 완료", "\(summary.copied)개 복사 · 이미 복사한 메모 \(summary.skipped)개 건너뜀")
         } catch { showFolderError(error.localizedDescription) }
     }
 
@@ -636,17 +694,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     private func addFolderNote(in folder: URL) {
+        store.flush(finishingTitle: store.selectedID)
         do {
-            let id = try store.linkedFolders.addNote(in: folder)
+            guard let id = try store.addNote(in: folder) else { return }
             positionRail()
             openNote(id)
         } catch { showFolderError(error.localizedDescription) }
     }
 
-    @objc private func saveLinkedDraftAsCopy() {
+    @objc private func saveDraftAsCopy() {
         guard let id = store.selectedID else { return }
         do {
-            if let copy = try store.saveLinkedDraftAsCopy(id) {
+            if let copy = try store.saveDraftAsCopy(id) {
                 positionRail()
                 openNote(copy)
             }
@@ -654,15 +713,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
     }
 
     private func showFolderError(_ message: String) {
+        showFolderMessage("마크다운 폴더", message)
+    }
+
+    private func showFolderMessage(_ title: String, _ message: String) {
         let alert = NSAlert()
-        alert.messageText = "마크다운 폴더"
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "확인")
         alert.runModal()
     }
 
     @objc private func retrySave() {
-        if !store.flush() { showError() }
+        if !store.flush(finishingAllTitles: true) { showError() }
     }
 
     private func showError() {
@@ -671,13 +734,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuItemValidation
         alert.informativeText = store.errorMessage ?? "메모를 저장하지 못했습니다."
         alert.addButton(withTitle: "확인")
         alert.addButton(withTitle: "저장 폴더 열기")
-        if alert.runModal() == .alertSecondButtonReturn { revealStorage() }
+        if alert.runModal() == .alertSecondButtonReturn {
+            if let id = store.selectedID, let file = store.file(for: id) {
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            } else {
+                revealLocalStorage()
+            }
+        }
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if !store.hasUnsavedChanges || store.flush() { return .terminateNow }
+        if !store.hasUnsavedChanges || store.flush(finishingAllTitles: true) { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "아직 저장되지 않은 내용이 있습니다"
         alert.informativeText = "종료하면 최근 변경을 잃을 수 있습니다. 저장 위치를 확인하고 다시 시도해 주세요."

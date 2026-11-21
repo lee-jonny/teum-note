@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "TeumCore"),
         .executableTarget(name: "TeumApp", dependencies: ["TeumCore"]),
-        .testTarget(name: "TeumCoreTests", dependencies: ["TeumCore"])
+        .testTarget(name: "TeumCoreTests", dependencies: ["TeumCore"]),
+        .testTarget(name: "TeumAppTests", dependencies: ["TeumApp", "TeumCore"])
     ]
 )

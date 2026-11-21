@@ -14,6 +14,11 @@ Apple은 글자·배경·구분선에 용도에 맞는 시스템 색을 쓰고, 
 - **본문과 도구.** 시스템의 배경색·기본 글자색·보조 글자색을 읽기와 편집에 함께 적용한다. 모드가 바뀌어도 본문과 커서가 선명해야 한다. 밝은 바탕과 어두운 바탕에서 같은 메모를 열어 링크·인용문·선택 영역·저장 오류를 확인한다. [읽기·편집 화면](Sources/TeumApp/NoteViews.swift) · [편집 서식](Sources/TeumCore/MarkdownEditingStyle.swift)
 - **메모 식별.** 기존 다섯 색의 저장값을 유지하면서 색을 가장자리 탭과 색상 선택기에 집중한다. 선택한 색에는 체크나 윤곽을 함께 표시한다. 예전 버전의 메모를 열어 색 분류가 보존되는지, 색을 구분하기 어려운 상태에서도 현재 선택이 보이는지 확인한다. [메모 모델](Sources/TeumCore/Note.swift) · [Apple HIG 색상 접근성](https://developer.apple.com/design/human-interface-guidelines/color#Inclusive-color)
 
+### 11월 21일 팔레트 조정
+
+- **탭과 열린 메모를 같은 색으로 연결한다.** 메모 하나에 모드별 불투명 배경색 하나를 배정하고, 접힌 탭·펼친 탭·본문에서 그대로 재사용한다. 배경색은 분류를 나타내며, 현재 선택은 윤곽과 접근성 상태로도 전달한다. Apple은 색의 의미를 일관되게 유지하고, macOS에서 의미가 있는 색은 바탕화면에 따라 달라지지 않도록 불투명하게 적용할 것을 권한다. [Apple HIG 색상](https://developer.apple.com/design/human-interface-guidelines/color) · [Apple HIG 다크 모드](https://developer.apple.com/design/human-interface-guidelines/dark-mode)
+- **넓은 면에서도 읽기 편한 색을 쓴다.** 라이트 모드는 밝고 부드러운 파스텔, 다크 모드는 같은 계열의 깊은 색을 사용한다. 다섯 배경에서 제목·본문·보조 글자의 대비를 확인한다. Apple은 일반 글자에 최소 4.5:1, 작고 사용자 지정 색을 쓰는 글자에는 7:1을 권장 목표로 제시한다. 밝은 모드, 어두운 모드, 대비 증가 설정에서 선택 윤곽도 확인한다. [Apple HIG 다크 모드](https://developer.apple.com/design/human-interface-guidelines/dark-mode) · [W3C 대비 기준](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
+
 ## 3. Homebrew 설치와 업데이트
 
 기존 GitHub 저장소는 URL을 명시해 자체 탭으로 등록할 수 있다. Apple Silicon용 ZIP을 배포하는 틈에는 앱 번들을 설치하는 Cask가 맞는다. [Homebrew Taps](https://docs.brew.sh/Taps) · [Cask Cookbook](https://docs.brew.sh/Cask-Cookbook)

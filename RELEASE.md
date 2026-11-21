@@ -1,23 +1,23 @@
-# 틈 0.3.0
+# 틈 0.4.0
 
-- 가장자리 탭과 색상 선택기에 맑은 다섯 가지 색을 적용했습니다. 선택한 색을 메모 배경에도 옅게 반영하며, 라이트·다크 모드는 macOS 설정을 따릅니다.
-- 메뉴 막대의 **틈 → 마크다운 폴더**에서 로컬 및 iCloud Drive 폴더를 여러 개 연결할 수 있습니다. 기존 메모를 Markdown 파일로 복사하면, 다른 Mac에서는 같은 폴더를 연결하고 iPhone에서는 **파일 → iCloud Drive**에서 확인할 수 있습니다.
-- 연결 파일이 다른 곳에서 변경된 경우 덮어쓰기를 중단합니다. 저장하지 못한 편집은 별도 파일로 보존할 수 있습니다.
-- 미리보기에서 문단 사이를 복사할 때 장식 구분선 문자가 포함되지 않습니다.
-- Apple Silicon 및 macOS 14 이상을 지원합니다. 이 배포본은 임시 서명 빌드로, macOS에서 첫 실행 시 별도 승인이 필요할 수 있습니다.
+- **메모 하나당 Markdown 파일 하나.** 이전 로컬 메모는 개별 `.md` 파일로 전환하고 `notes.json` 원본은 백업으로 남깁니다. 파일명은 첫 줄 제목을 따르며 중복 이름에는 번호를 붙입니다.
+- **iCloud Drive를 새 메모 저장 위치로 지정.** 메뉴 막대의 **틈 → 마크다운 폴더 → 새 메모 저장 폴더 선택…**에서 폴더를 고르면 `+`나 `⌘N`으로 만든 메모가 바로 그 폴더에 생깁니다. **이 Mac의 메모 폴더 열기**에서 로컬 파일도 확인할 수 있습니다.
+- **메모별 저장과 복구.** 파일 충돌이 생겨도 다른 메모를 저장할 수 있습니다. 현재 편집을 로컬 사본으로 보관하고, 로컬·연결 메모의 생성과 삭제를 같은 실행 취소 기록에서 되돌릴 수 있습니다. 이미 복사한 메모는 같은 폴더에 다시 복사할 때 건너뜁니다.
+- **더 옅은 색상.** 접힌 탭과 열린 메모에 같은 색을 적용합니다. 열린 메모에는 저장 위치, 새 메모 버튼에는 생성 위치를 표시합니다.
+- Apple Silicon 및 macOS 14 이상을 지원합니다. 이 배포본은 임시 서명 빌드이며 macOS에서 첫 실행 시 별도 승인이 필요할 수 있습니다.
 
-## Homebrew
+## Homebrew 업데이트
+
+틈을 종료하고 실행합니다.
+
+```sh
+brew update
+brew upgrade --cask lee-jonny/teum-note/teum
+```
+
+처음 설치하는 Mac에서는 다음 명령을 실행합니다.
 
 ```sh
 brew tap lee-jonny/teum-note https://github.com/lee-jonny/teum-note.git
 brew install --cask lee-jonny/teum-note/teum
 ```
-
-기존 `willofi/teum-note` 설치는 틈을 종료하고 위의 `brew tap`을 실행한 후 새 주소로 다시 설치합니다. 메모는 Application Support 폴더에 보관됩니다.
-
-```sh
-brew reinstall --cask lee-jonny/teum-note/teum
-brew untap willofi/teum-note
-```
-
-전환 후에는 `brew update`와 `brew upgrade --cask lee-jonny/teum-note/teum`으로 업데이트합니다.
