@@ -41,8 +41,9 @@ private final class PreviewTextView: NSTextView {
     override func writeSelection(to pasteboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         guard types.contains(.string) else { return super.writeSelection(to: pasteboard, types: types) }
         let range = selectedRange()
-        guard range.length > 0 else { return false }
-        let selected = (string as NSString).substring(with: range)
+        guard range.length > 0, let storage = textStorage else { return false }
+        let selected = MarkdownPreviewText.copyText(in: range, from: storage)
+        guard !selected.isEmpty else { return false }
         pasteboard.clearContents()
         return pasteboard.writeObjects([selected as NSString])
     }

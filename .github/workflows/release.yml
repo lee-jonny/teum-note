@@ -62,8 +62,11 @@ jobs:
           latest=$(gh release view --json tagName --jq .tagName)
           [[ "$latest" = "$TAG" ]] || exit 0
           asset="Teum-${TAG#v}-macos-arm64.zip"
-          gh release download "$TAG" --pattern "$asset" --dir "$RUNNER_TEMP"
-          export SHA256=$(shasum -a 256 "$RUNNER_TEMP/$asset" | cut -d ' ' -f 1)
+          verification_dir=$(mktemp -d "$RUNNER_TEMP/teum-release.XXXXXX")
+          gh release download "$TAG" --pattern "$asset" --dir "$verification_dir"
+          bash scripts/verify-release-archive.sh "$verification_dir/$asset" "${TAG#v}"
+          checksum=$(shasum -a 256 "$verification_dir/$asset")
+          export SHA256="${checksum%% *}"
           ruby -pi -e 'sub(/^  version ".*"$/, "  version \"#{ENV.fetch("TAG").delete_prefix("v")}\""); sub(/^  sha256 ".*"$/, "  sha256 \"#{ENV.fetch("SHA256")}\"")' Casks/teum.rb
           if ! git diff --quiet -- Casks/teum.rb; then
             git config user.name github-actions[bot]

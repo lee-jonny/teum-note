@@ -11,15 +11,23 @@ SwiftUI + AppKit으로 만든 macOS 네이티브 앱입니다. 계정, 서버, �
 Apple Silicon Mac과 macOS 14 이상에서 다음 명령으로 설치합니다.
 
 ```sh
-brew tap willofi/teum-note https://github.com/willofi/teum-note.git
-brew install --cask willofi/teum-note/teum
+brew tap lee-jonny/teum-note https://github.com/lee-jonny/teum-note.git
+brew install --cask lee-jonny/teum-note/teum
 ```
 
 업데이트할 때는 틈을 종료한 뒤 실행합니다.
 
 ```sh
 brew update
-brew upgrade --cask willofi/teum-note/teum
+brew upgrade --cask lee-jonny/teum-note/teum
+```
+
+기존에 `willofi/teum-note` 탭으로 설치했다면 틈을 종료하고 새 탭으로 한 번 전환합니다.
+
+```sh
+brew tap lee-jonny/teum-note https://github.com/lee-jonny/teum-note.git
+brew reinstall --cask lee-jonny/teum-note/teum
+brew untap willofi/teum-note
 ```
 
 직접 설치한 앱이 이미 있으면 Homebrew가 설치 위치 충돌을 알릴 수 있습니다. 메모는 앱 번들과 별도로 저장됩니다. 배포 파일은 개발용 임시 서명 빌드이며, Apple 공증이 없어 macOS에서 최초 실행이 제한될 수 있습니다.
@@ -49,7 +57,7 @@ GitHub Release의 ZIP을 내려받은 경우 압축을 풀고 `Teum.app`을 응�
 - `⌘Z`는 방금 생성하거나 삭제한 메모를 되돌리고, `⌘⇧Z`는 다시 실행합니다. 본문을 편집 중일 때는 글쓰기 실행 취소가 우선합니다. 메모 목록의 실행 취소 기록은 앱을 종료하면 초기화됩니다.
 - 단축키가 다른 앱에 점유되어 있으면 메뉴 막대의 이전·다음 메모 항목으로 접근합니다.
 - 탭 아래 `+` 또는 편집창 하단의 `+` 버튼으로 메모를 추가합니다. 첫 줄이 탭 제목이 되며 마크다운의 제목·강조 표식은 숨깁니다.
-- 아래쪽의 색상 원으로 가장자리 탭의 분류색을 고릅니다. 본문은 시스템의 밝은 모드와 어두운 모드를 따릅니다.
+- 아래쪽의 색상 원으로 메모의 분류색을 고릅니다. 가장자리 탭은 분류색으로 표시하고, 본문에는 같은 색을 옅게 적용합니다. 본문은 시스템의 밝은 모드와 어두운 모드를 따릅니다.
 - 하단 `…` 메뉴에서 저장 상태·글자 수를 확인하거나 메모를 삭제합니다.
 - 메뉴 막대의 틈 아이콘에서 왼쪽/오른쪽 배치, 탭 숨기기, 화면 이동, 저장 폴더 열기, 종료를 선택합니다.
 - 메모가 많아지면 탭 영역을 스크롤할 수 있습니다.
@@ -78,7 +86,15 @@ GitHub Release의 ZIP을 내려받은 경우 압축을 풀고 `Teum.app`을 응�
 
 입력 후 350ms 뒤 JSON을 원자적으로 교체 저장합니다. 마크다운 원문도 그대로 저장합니다. 패널을 접거나 앱을 종료할 때도 즉시 저장합니다. 파일 읽기에 실패하면 원본을 보존하고 편집을 막습니다. 저장 실패는 패널 하단에 표시되며, 메뉴에서 다시 시도할 수 있습니다. 저장하지 못한 상태로 종료할 때는 경고합니다.
 
-백업은 앱을 종료한 뒤 이 JSON 파일을 복사하면 됩니다. 메모는 평문으로 저장됩니다. 클라우드 동기화와 네트워크 통신은 없습니다.
+백업은 앱을 종료한 뒤 이 JSON 파일을 복사하면 됩니다. 메모는 평문으로 저장됩니다. 기본 로컬 메모는 이 Mac에 보관됩니다.
+
+## Markdown 폴더와 iCloud Drive
+
+- 메뉴 막대의 **틈 → 마크다운 폴더 → 폴더 연결…**에서 로컬 또는 iCloud Drive 폴더를 고릅니다. 여러 폴더를 연결할 수 있고, 각 폴더 바로 아래의 UTF-8 `.md`, `.markdown` 파일이 로컬 메모와 함께 가장자리 탭에 나타납니다. 하위 폴더는 개별적으로 연결할 수 있습니다.
+- **로컬 메모를 폴더로 복사…**로 기존 JSON 메모를 개별 Markdown 파일로 내보냅니다. 원본은 로컬에 남고, 이후 Mac 간에 공유하려면 연결 폴더 쪽 메모를 편집합니다. 파일 이름과 삭제는 Finder에서 관리합니다.
+- 다른 Mac에서는 동일한 Apple 계정의 iCloud Drive에서 같은 폴더를 연결합니다. iPhone에서는 **파일 → 둘러보기 → iCloud Drive**에서 메모 파일을 확인합니다. iCloud Drive가 내려받은 변경은 앱을 다시 활성화하거나 **연결한 폴더 새로고침**을 선택하면 반영됩니다. 편집 화면에서는 새로고침 메뉴를 사용합니다.
+- 저장 시 파일이 읽었을 때와 달라졌으면 현재 편집을 덮어쓰지 않고 창에 유지합니다. **저장되지 않은 편집을 사본으로 저장**을 사용하면 같은 폴더에 별도의 Markdown 파일로 복구합니다. 오프라인에서 같은 파일을 여러 기기로 편집하면 iCloud에서 별도 충돌 해결이 필요할 수 있습니다.
+- **연결 해제**는 틈노트의 탭에서 폴더를 숨깁니다. 파일은 해당 폴더에 그대로 남습니다. 연결 목록은 각 Mac의 `linked-folders.json`에 보관됩니다.
 
 ## 개발
 

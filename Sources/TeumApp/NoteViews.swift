@@ -4,11 +4,11 @@ import TeumCore
 extension NoteColor {
     var accent: Color {
         switch self {
-        case .butter: Color(red: 0.76, green: 0.67, blue: 0.44)
-        case .peach: Color(red: 0.79, green: 0.57, blue: 0.51)
-        case .sage: Color(red: 0.48, green: 0.66, blue: 0.57)
-        case .sky: Color(red: 0.48, green: 0.63, blue: 0.76)
-        case .lavender: Color(red: 0.65, green: 0.58, blue: 0.75)
+        case .butter: Color(red: 0.97, green: 0.82, blue: 0.38)
+        case .peach: Color(red: 1.00, green: 0.66, blue: 0.60)
+        case .sage: Color(red: 0.51, green: 0.84, blue: 0.71)
+        case .sky: Color(red: 0.53, green: 0.77, blue: 0.98)
+        case .lavender: Color(red: 0.76, green: 0.68, blue: 0.98)
         }
     }
 
@@ -121,9 +121,11 @@ struct NoteEditorView: View {
     let add: () -> Void
     let delete: (UUID) -> Void
     @State private var preview = true
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let note = store.selectedNote {
+            let linkedFile = store.linkedFolders.file(for: note.id)
             VStack(spacing: 0) {
                 Group {
                     if preview {
@@ -146,13 +148,15 @@ struct NoteEditorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 HStack(spacing: 6) {
-                    ForEach(NoteColor.allCases, id: \.self) { color in
+                    ForEach(linkedFile == nil ? NoteColor.allCases : [], id: \.self) { color in
                         Button { store.updateColor(color, id: note.id) } label: {
                             Circle().fill(color.accent)
                                 .overlay(Circle().strokeBorder(ink.opacity(note.color == color ? 0.4 : 0.15)))
                                 .overlay {
                                     if note.color == color {
-                                        Circle().fill(ink.opacity(0.6)).frame(width: 4, height: 4)
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 8, weight: .semibold))
+                                            .foregroundStyle(.black.opacity(0.75))
                                     }
                                 }
                                 .frame(width: 14, height: 14)
@@ -175,8 +179,16 @@ struct NoteEditorView: View {
                     Menu {
                         Text(store.saveState)
                         Text("\(note.text.count)자")
-                        Divider()
-                        Button("메모 삭제…", role: .destructive) { delete(note.id) }
+                        if let linkedFile {
+                            Text(linkedFile.deletingLastPathComponent().lastPathComponent)
+                            Divider()
+                            Button("Finder에서 파일 보기") {
+                                NSWorkspace.shared.activateFileViewerSelecting([linkedFile])
+                            }
+                        } else {
+                            Divider()
+                            Button("메모 삭제…", role: .destructive) { delete(note.id) }
+                        }
                     } label: {
                         Image(systemName: "ellipsis").frame(width: 24, height: 28)
                     }
@@ -210,6 +222,7 @@ struct NoteEditorView: View {
             }
             .foregroundStyle(ink)
             .buttonStyle(.plain)
+            .background(note.color.accent.opacity(colorScheme == .dark ? 0.04 : 0.16))
             .background(paper)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color(nsColor: .separatorColor)))

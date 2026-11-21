@@ -3,6 +3,18 @@ import AppKit
 @MainActor
 public enum MarkdownPreviewText {
     private static let blockID = NSAttributedString.Key("TeumPreviewBlock")
+    private static let decoration = NSAttributedString.Key("TeumPreviewDecoration")
+
+    public static func copyText(in range: NSRange, from text: NSAttributedString) -> String {
+        let string = text.string as NSString
+        var result = ""
+        text.enumerateAttribute(decoration, in: range) { decoration, range, _ in
+            if decoration == nil {
+                result += string.substring(with: range)
+            }
+        }
+        return result
+    }
 
     public static func blockRange(at index: Int, in text: NSAttributedString) -> NSRange? {
         guard index >= 0, index < text.length else { return nil }
@@ -14,8 +26,12 @@ public enum MarkdownPreviewText {
 
     public static func render(_ source: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
+        var hasContent = false
         for (index, block) in MarkdownDocument.blocks(in: source).enumerated() {
-            if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
+            if index > 0 {
+                let attributes: [NSAttributedString.Key: Any] = block == .divider || !hasContent ? [decoration: true] : [:]
+                result.append(NSAttributedString(string: "\n\n", attributes: attributes))
+            }
             let start = result.length
             let style = NSMutableParagraphStyle()
             style.lineSpacing = 4
@@ -37,7 +53,8 @@ public enum MarkdownPreviewText {
                 style.headIndent = 12
                 result.append(inline(text, color: .secondaryLabelColor))
             case .divider:
-                result.append(NSAttributedString(string: "────────", attributes: [.foregroundColor: NSColor.separatorColor]))
+                result.append(NSAttributedString(string: "────────", attributes: [.foregroundColor: NSColor.separatorColor, decoration: true]))
+                continue
             case .code(let language, let text):
                 if !language.isEmpty {
                     result.append(NSAttributedString(string: language + "\n", attributes: [.font: NSFont.systemFont(ofSize: 10),
@@ -47,6 +64,7 @@ public enum MarkdownPreviewText {
                                                                             .foregroundColor: NSColor.labelColor,
                                                                             .backgroundColor: NSColor.quaternaryLabelColor]))
             }
+            hasContent = hasContent || result.length > start
             let range = NSRange(location: start, length: result.length - start)
             result.addAttributes([.paragraphStyle: style, blockID: index], range: range)
             if case .code(let language, _) = block, !language.isEmpty {

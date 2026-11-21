@@ -21,3 +21,22 @@ Apple은 글자·배경·구분선에 용도에 맞는 시스템 색을 쓰고, 
 1. **릴리스 생성.** 지정한 태그의 소스로 테스트하고 앱을 빌드한다. 번들의 버전, CPU 아키텍처, 최소 macOS 버전을 확인한다. 일반 공개 배포에서는 Developer ID로 서명한 앱을 공증하고 티켓을 첨부한 후 ZIP을 만든다. 다운로드할 최종 ZIP의 SHA-256을 계산한다. [릴리스 워크플로](.github/workflows/release.yml) · [Apple Developer ID와 공증](https://developer.apple.com/developer-id/)
 2. **Cask 갱신.** 공개 ZIP을 내려받을 수 있는 시점에 탭의 버전과 해시를 함께 갱신한다. 앱 이름은 `Teum.app`, 배포 조건은 Apple Silicon과 macOS 14 이상으로 맞춘다. 재실행 시 동일 버전 URL의 내용이 바뀌면 이미 설치에 쓰인 해시와 어긋나므로 새 빌드에는 새 버전을 부여한다. [Cask Cookbook](https://docs.brew.sh/Cask-Cookbook)
 3. **업데이트 검증.** 격리한 테스트 환경에서 이전 Cask로 설치하고 한글 메모를 만든 뒤 앱을 종료한다. 다음 버전을 게시한 후 `brew update`, `brew outdated --cask`, `brew upgrade --cask`로 해당 앱을 갱신한다. 번들의 새 버전과 기존 메모의 내용·순서·색상을 함께 확인하면 배포 검증이 끝난다. 실제 설치에 사용하는 탭 이름과 명령은 README에 한 곳으로 모은다. [Homebrew 명령 설명](https://docs.brew.sh/Manpage) · [프로젝트 README](README.md)
+
+### Developer ID 서명과 공증
+
+1. Apple Developer Program 팀의 Account Holder가 **Developer ID Application** 인증서를 발급하고, 배포용 Mac의 키체인에 인증서와 개인 키를 설치한다. `security find-identity -v -p codesigning`으로 서명 ID를 확인한다. [Developer ID 인증서 발급](https://developer.apple.com/help/account/certificates/create-developer-id-certificates)
+2. 새 버전 태그의 소스에서 앱을 빌드한 뒤 아래 순서로 서명하고 공증한다. 먼저 Apple 계정의 앱 전용 암호로 `xcrun notarytool store-credentials teum-notary --apple-id "Apple 계정 이메일" --team-id "팀 ID"`를 실행해 공증 자격 증명을 키체인에 저장한다. [Apple 공증 워크플로](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+
+```sh
+bash scripts/build-app.sh
+codesign --force --options runtime --timestamp \
+  --sign "Developer ID Application: 이름 (팀 ID)" dist/Teum.app
+ditto -c -k --sequesterRsrc --keepParent dist/Teum.app dist/Teum-notary.zip
+xcrun notarytool submit dist/Teum-notary.zip --keychain-profile teum-notary --wait
+# 상태가 Accepted이면 티켓을 앱에 첨부한다.
+xcrun stapler staple dist/Teum.app
+xcrun stapler validate dist/Teum.app
+spctl --assess --type execute --verbose=4 dist/Teum.app
+```
+
+3. 티켓이 첨부된 앱으로 버전 이름이 붙은 배포 ZIP을 다시 만들고, 새 GitHub Release를 공개할 때 함께 올린다. 릴리스 워크플로는 공개 ZIP을 다시 받아 번들 ID, 버전, 실행 파일, 아키텍처, 서명 무결성을 검사한 뒤 Cask에 해시를 반영한다. 서명과 공증을 CI에서 자동화하려면 배포 인증서와 공증 자격 증명을 GitHub Actions Secrets로 설정하고, ZIP을 게시하기 전에 `stapler validate`와 `spctl` 검사를 추가한다. [Apple 공증 워크플로](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)

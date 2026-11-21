@@ -16,6 +16,8 @@ final class NotebookStore {
     var saveState = "이 Mac에 저장됨"
     var errorMessage: String?
     var loadFailed = false
+    let linkedFolders: LinkedNoteFolders
+    private var pendingFiles: Set<UUID> = []
     private let repository: NotebookRepository
     private var pendingSave: Task<Void, Never>?
     private var dirty = false
@@ -25,6 +27,7 @@ final class NotebookStore {
 
     init(fileURL: URL) {
         repository = NotebookRepository(fileURL: fileURL)
+        linkedFolders = LinkedNoteFolders(directory: fileURL.deletingLastPathComponent())
         do {
             if let saved = try repository.load() {
                 notebook = saved
@@ -39,7 +42,7 @@ final class NotebookStore {
         }
     }
 
-    var notes: [Note] { notebook.notes }
+    var notes: [Note] { notebook.notes + linkedFolders.notes }
     var selectedNote: Note? { notes.first { $0.id == selectedID } }
     var fileURL: URL { repository.fileURL }
     var canUndoListChange: Bool { listHistory.canUndo && !loadFailed }
@@ -48,8 +51,8 @@ final class NotebookStore {
     func addNote() -> UUID? {
         guard !loadFailed else { return nil }
         let previousSelection = selectedID
-        let note = Note(color: NoteColor.following(notes.last?.color))
-        listHistory.recordInsertion(note, at: notes.count, previousSelection: previousSelection)
+        let note = Note(color: NoteColor.following(notebook.notes.last?.color))
+        listHistory.recordInsertion(note, at: notebook.notes.count, previousSelection: previousSelection)
         notebook.notes.append(note)
         selectedID = note.id
         prefersListUndo = true
@@ -58,7 +61,38 @@ final class NotebookStore {
         return note.id
     }
 
+    func reloadFolders() {
+        linkedFolders.reload(keepingDrafts: pendingFiles)
+    }
+
+    func saveLinkedDraftAsCopy(_ id: UUID) throws -> UUID? {
+        guard pendingFiles.contains(id), let file = linkedFolders.file(for: id),
+              let note = linkedFolders.notes.first(where: { $0.id == id }) else { return nil }
+        let newID = try linkedFolders.addNote(in: file.deletingLastPathComponent(), text: note.text)
+        pendingFiles.remove(id)
+        if pendingFiles.isEmpty && !dirty {
+            saveState = "저장됨"
+            errorMessage = nil
+        }
+        reloadFolders()
+        return newID
+    }
+
+    var canCopyLinkedDraft: Bool {
+        errorMessage != nil && selectedID.map(pendingFiles.contains) == true
+    }
+
+    var hasUnsavedChanges: Bool { dirty || !pendingFiles.isEmpty }
+
     func updateText(_ text: String, id: UUID) {
+        if linkedFolders.file(for: id) != nil {
+            linkedFolders.update(text, for: id)
+            pendingFiles.insert(id)
+            prefersListUndo = false
+            prefersListRedo = false
+            scheduleSave(local: false)
+            return
+        }
         guard let index = notebook.notes.firstIndex(where: { $0.id == id }) else { return }
         notebook.notes[index].text = text
         notebook.notes[index].updatedAt = .now
@@ -84,7 +118,7 @@ final class NotebookStore {
         listHistory.recordRemoval(notebook.notes[index], at: index, previousSelection: previousSelection)
         notebook.notes.remove(at: index)
         if previousSelection == id {
-            selectedID = index < notes.count ? notes[index].id : notes.last?.id
+            selectedID = index < notebook.notes.count ? notebook.notes[index].id : notes.last?.id
         }
         prefersListUndo = true
         prefersListRedo = false
@@ -114,8 +148,8 @@ final class NotebookStore {
         scheduleSave()
     }
 
-    private func scheduleSave() {
-        dirty = true
+    private func scheduleSave(local: Bool = true) {
+        if local { dirty = true }
         saveState = "저장 중…"
         pendingSave?.cancel()
         pendingSave = Task { [weak self] in
@@ -127,11 +161,17 @@ final class NotebookStore {
     @discardableResult
     func flush() -> Bool {
         pendingSave?.cancel()
-        guard !loadFailed, dirty else { return !loadFailed }
+        guard dirty || !pendingFiles.isEmpty else { return !loadFailed }
         do {
-            try repository.save(notebook)
-            dirty = false
-            saveState = "이 Mac에 저장됨"
+            if dirty {
+                try repository.save(notebook)
+                dirty = false
+            }
+            for id in Array(pendingFiles) {
+                try linkedFolders.save(id)
+                pendingFiles.remove(id)
+            }
+            saveState = "저장됨"
             errorMessage = nil
             return true
         } catch {

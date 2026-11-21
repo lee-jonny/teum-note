@@ -43,6 +43,7 @@ struct MarkdownEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? NSTextView, !editor.hasMarkedText(), editor.string != text else { return }
         editor.string = text
+        editor.undoManager?.removeAllActions()
         context.coordinator.style(editor)
     }
 
