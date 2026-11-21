@@ -1,6 +1,6 @@
 cask "teum" do
-  version "0.4.0"
-  sha256 "229e9deba9cc6cc43641fae937492fedb47e2ac6a607dab467b1bf33336f2b54"
+  version "0.5.0"
+  sha256 "cc2fa7fd6c655dfd39182bb45b8855934b895d4a3ccd09b0b113dbcc246ecd2a"
 
   url "https://github.com/lee-jonny/teum-note/releases/download/v#{version}/Teum-#{version}-macos-arm64.zip"
   name "Teum"
